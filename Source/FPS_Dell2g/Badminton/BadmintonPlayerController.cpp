@@ -46,12 +46,13 @@
 ABadmintonPlayerController::ABadmintonPlayerController()
 {
 	bAutoManageActiveCameraTarget = false;
+	// Possession grants abilities before BeginPlay; choose their network policy first.
+	bThirdPersonControl = !FParse::Param(FCommandLine::Get(), TEXT("BadmintonLegacyFirstPerson"));
 }
 
 void ABadmintonPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
-	bThirdPersonControl = !FParse::Param(FCommandLine::Get(), TEXT("BadmintonLegacyFirstPerson"));
 	if (IsLocalController())
 	{
 		LoadPracticeSettings();
