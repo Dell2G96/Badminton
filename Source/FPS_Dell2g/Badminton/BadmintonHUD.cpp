@@ -74,6 +74,7 @@ void ABadmintonHUD::Label(const FString& Text, float X, float Y, float Size, con
 void ABadmintonHUD::DrawHUD()
 {
 	Super::DrawHUD();
+	if (Canvas && Canvas->ClipX > 0 && Canvas->ClipY > 0 && DrawOnlineLobby()) { return; }
 	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
 	const ABadmintonPlayerState* State = PlayerOwner ? PlayerOwner->GetPlayerState<ABadmintonPlayerState>() : nullptr;
 	const ABadmintonPlayerController* Controller = Cast<ABadmintonPlayerController>(PlayerOwner);

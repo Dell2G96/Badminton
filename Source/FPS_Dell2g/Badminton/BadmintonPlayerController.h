@@ -86,6 +86,10 @@ public:
 	void BadmintonEOSJoin(int32 Index);
 	UFUNCTION(Exec)
 	void BadmintonEOSLeave();
+	UFUNCTION(Exec) void BadmintonToggleOnlineLobby();
+	void SetOnlineLobbyOpen(bool bOpen);
+	bool IsOnlineLobbyOpen() const { return bOnlineLobbyOpen; }
+	void JoinSelectedEOSRoom();
 	UFUNCTION(Server, Reliable)
 	void ServerSetReady(bool bReady);
 	UFUNCTION(Client, Reliable)
@@ -102,6 +106,13 @@ protected:
 	virtual void SetupInputComponent() override;
 
 private:
+	bool bOnlineLobbyOpen = false;
+	double OnlineInputResumeAt = 0.;
+	bool IsOnlineGameplayBlocked() const;
+	void PreviousOnlineRoom();
+	void NextOnlineRoom();
+	void PreviousOnlinePage();
+	void NextOnlinePage();
 	bool bThirdPersonControl = true;
 	UFUNCTION(Server, Reliable) void ServerThirdPersonShot(EBadmintonShot Shot, FVector2D Aim, int32 RallyId, int32 Sequence);
 	void RunThirdPersonProbe(float DeltaTime);
@@ -211,7 +222,6 @@ private:
 	bool bPresentationProbe = false;
 	float PresentationProbeWait = 0.f;
 	bool bSawConnectedCourt = false;
-	void JoinFirstEOSRoom();
 	void SendShot(EBadmintonShot Shot);
 	void Input_Move(const FInputActionValue& Value, FVector2D Direction);
 	void RunNetworkProbe(float DeltaTime);

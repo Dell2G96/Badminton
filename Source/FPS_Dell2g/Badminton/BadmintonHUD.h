@@ -15,6 +15,7 @@ class FPS_DELL2G_API ABadmintonHUD : public AHUD
 
 public:
 	virtual void DrawHUD() override;
+	virtual void NotifyHitBoxClick(FName BoxName) override;
 
 private:
 	UPROPERTY(Transient)
@@ -25,6 +26,7 @@ private:
 	void Panel(float X, float Y, float Width, float Height, const FLinearColor& Color);
 	void Label(const FString& Text, float X, float Y, float Size, const FLinearColor& Color, float MaxWidth = 0.f, bool bCentered = false);
 	float UIScale = 1.f;
+	bool DrawOnlineLobby();
 	void DrawShuttleTracking(const ABadmintonGameState* Match);
 	void DrawAimPreview();
 	void DrawMinimap(const ABadmintonGameState* Match, int32 LocalSide, float Width);

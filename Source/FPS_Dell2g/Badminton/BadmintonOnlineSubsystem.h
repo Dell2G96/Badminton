@@ -24,12 +24,19 @@ public:
 	void JoinRoom(int32 Index);
 	void Leave();
 	bool IsEnabled() const { return bEnabled; }
+	bool IsBusy() const { return bBusy; }
+	bool IsLoggedIn() const;
+	bool IsInRoom() const;
+	int32 GetSelectedRoom() const { return SelectedRoom; }
+	void SelectRoom(int32 Index);
+	void MoveRoomSelection(int32 Offset);
 	const FString& GetStatus() const { return Status; }
 	const FString& GetConnectionNotice() const { return ConnectionNotice; }
 	void ClearConnectionNotice() { ConnectionNotice.Empty(); }
 	const TArray<FString>& GetRoomLabels() const { return RoomLabels; }
 
 private:
+	friend class FBadmintonOnlineSelectionTest;
 	bool RequireLogin();
 	void SetStatus(const FString& Message);
 	void OnLogin(int32 LocalUserNum, bool bSuccess, const FUniqueNetId& UserId, const FString& Error);
@@ -47,6 +54,7 @@ private:
 	TSharedPtr<FOnlineSessionSearch> Search;
 	TArray<FOnlineSessionSearchResult> Rooms;
 	TArray<FString> RoomLabels;
+	int32 SelectedRoom = INDEX_NONE;
 	FDelegateHandle LoginHandle, CreateHandle, FindHandle, JoinHandle, DestroyHandle;
 	FDelegateHandle NetworkFailureHandle, TravelFailureHandle;
 	FString Status = TEXT("오프라인 모드");

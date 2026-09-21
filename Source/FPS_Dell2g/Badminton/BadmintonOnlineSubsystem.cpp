@@ -82,6 +82,27 @@ bool UBadmintonOnlineSubsystem::RequireLogin()
 	return true;
 }
 
+bool UBadmintonOnlineSubsystem::IsLoggedIn() const
+{
+	return Identity.IsValid() && Identity->GetLoginStatus(0) == ELoginStatus::LoggedIn;
+}
+
+bool UBadmintonOnlineSubsystem::IsInRoom() const
+{
+	return Sessions.IsValid() && Sessions->GetNamedSession(NAME_GameSession) != nullptr;
+}
+
+void UBadmintonOnlineSubsystem::SelectRoom(int32 Index)
+{
+	if (!bBusy && Rooms.IsValidIndex(Index)) { SelectedRoom = Index; }
+}
+
+void UBadmintonOnlineSubsystem::MoveRoomSelection(int32 Offset)
+{
+	if (Rooms.IsEmpty() || bBusy) { return; }
+	SelectRoom(static_cast<int32>(FMath::Clamp<int64>(static_cast<int64>(FMath::Max(SelectedRoom, 0)) + Offset, 0, Rooms.Num() - 1)));
+}
+
 void UBadmintonOnlineSubsystem::Login()
 {
 	if (!bEnabled || bBusy) { return; }
@@ -159,6 +180,7 @@ void UBadmintonOnlineSubsystem::FindRooms()
 	if (Sessions->GetNamedSession(NAME_GameSession)) { SetStatus(TEXT("F5로 현재 방에서 나간 뒤 검색하세요.")); return; }
 	Rooms.Reset();
 	RoomLabels.Reset();
+	SelectedRoom = INDEX_NONE;
 	Search = MakeShared<FOnlineSessionSearch>();
 	Search->bIsLanQuery = false;
 	Search->MaxSearchResults = 20;
@@ -189,10 +211,13 @@ void UBadmintonOnlineSubsystem::OnFind(bool bSuccess)
 			|| Result.Session.SessionSettings.NumPublicConnections != 2 || Result.Session.NumOpenPublicConnections <= 0) { continue; }
 		Result.Session.SessionSettings.Get(RoomKey, Label);
 		Label = Label.Replace(TEXT("\n"), TEXT(" ")).Replace(TEXT("\r"), TEXT(" ")).Left(40);
-		RoomLabels.Add(FString::Printf(TEXT("%d: %s [%d/2]"), Rooms.Num(), *Label, 2 - Result.Session.NumOpenPublicConnections));
+		if (Label.IsEmpty()) { Label = TEXT("배드민턴 경기방"); }
+		RoomLabels.Add(FString::Printf(TEXT("%d. %s [%d/2]"), Rooms.Num() + 1, *Label, FMath::Clamp(2 - Result.Session.NumOpenPublicConnections, 0, 2)));
 		Rooms.Add(Result);
 	}
-	SetStatus(FString::Printf(TEXT("경기방 %d개 검색됨. F4: 첫 번째 방 참가, F3: 새로고침."), Rooms.Num()));
+	SelectedRoom = Rooms.IsEmpty() ? INDEX_NONE : 0;
+	SetStatus(Rooms.IsEmpty() ? TEXT("참가 가능한 방이 없습니다. 방을 만들거나 다시 검색하세요.")
+		: FString::Printf(TEXT("경기방 %d개 검색됨. 방 선택 후 F4로 참가하세요."), Rooms.Num()));
 }
 
 void UBadmintonOnlineSubsystem::JoinRoom(int32 Index)
@@ -251,6 +276,7 @@ void UBadmintonOnlineSubsystem::OnDestroy(FName Name, bool bSuccess)
 	bRecovering = false;
 	Rooms.Reset();
 	RoomLabels.Reset();
+	SelectedRoom = INDEX_NONE;
 	SetStatus(bSuccess ? TEXT("방에서 나왔습니다. F2: 방 만들기, F3: 방 검색.") : TEXT("방 정리에 실패했습니다. F5로 재시도하세요."));
 	if (bSuccess) { UGameplayStatics::OpenLevel(GetGameInstance(), CourtMap); }
 }

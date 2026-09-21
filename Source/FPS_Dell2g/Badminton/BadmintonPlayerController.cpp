@@ -58,6 +58,12 @@ void ABadmintonPlayerController::BeginPlay()
 		bDualView = !FParse::Param(FCommandLine::Get(), TEXT("BadmintonSingleView"));
 		SetViewTarget(this);
 		SetInputMode(FInputModeGameOnly());
+		const auto* Online = GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>();
+		if (GetNetMode() == NM_Standalone && (Online->IsEnabled() || !Online->GetConnectionNotice().IsEmpty()
+			|| FParse::Param(FCommandLine::Get(), TEXT("BadmintonOnlineLobby"))))
+		{
+			SetOnlineLobbyOpen(true);
+		}
 #if !UE_BUILD_SHIPPING
 		bTimingProbe = FParse::Param(FCommandLine::Get(), TEXT("BadmintonTimingTest")) || FParse::Param(FCommandLine::Get(), TEXT("BadmintonRacketPoseTest"));
 		bAIProbe = FParse::Param(FCommandLine::Get(), TEXT("BadmintonAITest"));
@@ -103,14 +109,19 @@ void ABadmintonPlayerController::SetupInputComponent()
 		PlayerInput->DebugExecBindings.RemoveAll([](const FKeyBind& Binding)
 		{
 			return Binding.Key == EKeys::F1 || Binding.Key == EKeys::F2 || Binding.Key == EKeys::F3
-				|| Binding.Key == EKeys::F4 || Binding.Key == EKeys::F5;
+				|| Binding.Key == EKeys::F4 || Binding.Key == EKeys::F5 || Binding.Key == EKeys::F6;
 		});
 	}
 	InputComponent->BindKey(EKeys::F1, IE_Pressed, this, &ThisClass::BadmintonEOSLogin);
 	InputComponent->BindKey(EKeys::F2, IE_Pressed, this, &ThisClass::BadmintonEOSHost);
 	InputComponent->BindKey(EKeys::F3, IE_Pressed, this, &ThisClass::BadmintonEOSFind);
-	InputComponent->BindKey(EKeys::F4, IE_Pressed, this, &ThisClass::JoinFirstEOSRoom);
+	InputComponent->BindKey(EKeys::F4, IE_Pressed, this, &ThisClass::JoinSelectedEOSRoom);
 	InputComponent->BindKey(EKeys::F5, IE_Pressed, this, &ThisClass::BadmintonEOSLeave);
+	InputComponent->BindKey(EKeys::F6, IE_Pressed, this, &ThisClass::BadmintonToggleOnlineLobby);
+	InputComponent->BindKey(EKeys::Up, IE_Pressed, this, &ThisClass::PreviousOnlineRoom);
+	InputComponent->BindKey(EKeys::Down, IE_Pressed, this, &ThisClass::NextOnlineRoom);
+	InputComponent->BindKey(EKeys::PageUp, IE_Pressed, this, &ThisClass::PreviousOnlinePage);
+	InputComponent->BindKey(EKeys::PageDown, IE_Pressed, this, &ThisClass::NextOnlinePage);
 	InputComponent->BindKey(EKeys::Equals, IE_Pressed, this, &ThisClass::SensitivityUp);
 	InputComponent->BindKey(EKeys::Add, IE_Pressed, this, &ThisClass::SensitivityUp);
 	InputComponent->BindKey(EKeys::Subtract, IE_Pressed, this, &ThisClass::SensitivityDown);
@@ -160,6 +171,7 @@ void ABadmintonPlayerController::SetupInputComponent()
 
 void ABadmintonPlayerController::Input_Move(const FInputActionValue& Value, FVector2D Direction)
 {
+	if (IsOnlineGameplayBlocked()) { return; }
 	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
 	if (State && State->CourtSide != INDEX_NONE && GetPawn() && Value.Get<bool>())
 	{
@@ -220,31 +232,36 @@ void ABadmintonPlayerController::BadmintonHost()
 
 void ABadmintonPlayerController::BadmintonEOSLogin()
 {
+	SetOnlineLobbyOpen(true);
 	if (IsLocalController()) { GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->Login(); }
 }
 
 void ABadmintonPlayerController::BadmintonEOSHost()
 {
+	SetOnlineLobbyOpen(true);
 	if (IsLocalController()) { GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->Host(TEXT("배드민턴 경기방")); }
 }
 
 void ABadmintonPlayerController::BadmintonEOSFind()
 {
+	SetOnlineLobbyOpen(true);
 	if (IsLocalController()) { GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->FindRooms(); }
 }
 
 void ABadmintonPlayerController::BadmintonEOSJoin(int32 Index)
 {
+	SetOnlineLobbyOpen(true);
 	if (IsLocalController()) { GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->JoinRoom(Index); }
 }
 
-void ABadmintonPlayerController::JoinFirstEOSRoom()
+void ABadmintonPlayerController::JoinSelectedEOSRoom()
 {
-	BadmintonEOSJoin(0);
+	if (IsLocalController()) { BadmintonEOSJoin(GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->GetSelectedRoom()); }
 }
 
 void ABadmintonPlayerController::BadmintonEOSLeave()
 {
+	SetOnlineLobbyOpen(true);
 	if (IsLocalController()) { GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->Leave(); }
 }
 
@@ -258,6 +275,8 @@ void ABadmintonPlayerController::BadmintonJoin(const FString& Address)
 
 void ABadmintonPlayerController::BadmintonReady()
 {
+	if (bOnlineLobbyOpen) { JoinSelectedEOSRoom(); return; }
+	if (IsOnlineGameplayBlocked()) { return; }
 	if (const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>())
 	{
 		ServerSetReady(!State->bReady);
@@ -306,6 +325,7 @@ void ABadmintonPlayerController::BadmintonSmash() { SendShot(EBadmintonShot::Sma
 
 void ABadmintonPlayerController::SendShot(EBadmintonShot Shot)
 {
+	if (IsOnlineGameplayBlocked()) { return; }
 	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
 	if (const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>(); State && Match)
 	{
@@ -330,6 +350,7 @@ void ABadmintonPlayerController::RacketWheelUp() { AdjustRacketFace(1.f); }
 void ABadmintonPlayerController::RacketWheelDown() { AdjustRacketFace(-1.f); }
 void ABadmintonPlayerController::AdjustRacketFace(float Steps)
 {
+	if (IsOnlineGameplayBlocked()) { return; }
 	if (bThirdPersonControl) { return; }
 	if (!IsLocalController() || SelectedStroke == EBadmintonShot::Smash) { return; }
 	RacketTilt = Badminton::AdjustRacketTilt(RacketTilt, Steps);
@@ -390,6 +411,7 @@ void ABadmintonPlayerController::RestoreTimingProbeControl()
 
 void ABadmintonPlayerController::UpdateMouseAim()
 {
+	if (IsOnlineGameplayBlocked()) { return; }
 	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
 	if (!Match) { return; }
 	if (AimRallyId != Match->RallyId)
@@ -447,6 +469,7 @@ bool ABadmintonPlayerController::GetShotDirectionPreview(FVector& Origin, FVecto
 
 void ABadmintonPlayerController::BadmintonDash()
 {
+	if (IsOnlineGameplayBlocked()) { return; }
 	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
 	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
 	if (!Match || !State || !GetPawn()) { return; }
@@ -525,7 +548,7 @@ void ABadmintonPlayerController::PlayerTick(float DeltaTime)
 		UpdateTiming();
 		const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
 		const bool bConnectedCourt = Match && Match->ConnectedPlayers == 2;
-		if (bConnectedCourt && !bSawConnectedCourt)
+		if (bConnectedCourt && !bSawConnectedCourt && GetNetMode() != NM_Standalone)
 		{
 			GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->ClearConnectionNotice();
 		}
@@ -968,6 +991,7 @@ void ABadmintonPlayerController::BadmintonHairpin()
 
 void ABadmintonPlayerController::SelectStroke(EBadmintonShot Shot)
 {
+	if (IsOnlineGameplayBlocked()) { return; }
 	if (!IsLocalController()) { return; }
 	if (bThirdPersonControl && Badminton::IsDropFamily(Shot)) { Shot = EBadmintonShot::Drop; }
 	SelectedStroke = Shot;
@@ -1024,6 +1048,7 @@ void ABadmintonPlayerController::ServerInstantShot_Implementation(EBadmintonShot
 
 void ABadmintonPlayerController::SelectTimedShot(EBadmintonShot Shot)
 {
+	if (IsOnlineGameplayBlocked()) { return; }
 	if (!IsLocalController()) { return; }
 	ServerArmTiming(Shot, bTimingArmed ? LockedAim : ShotAim);
 }
@@ -1094,6 +1119,7 @@ void ABadmintonPlayerController::ServerCancelTiming_Implementation() { bTimingAr
 
 void ABadmintonPlayerController::BadmintonStrike()
 {
+	if (IsOnlineGameplayBlocked()) { return; }
 	if (!IsLocalController()) { return; }
 	if (bThirdPersonControl)
 	{
