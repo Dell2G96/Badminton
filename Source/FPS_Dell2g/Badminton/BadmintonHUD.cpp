@@ -24,9 +24,9 @@
 namespace
 {
 	const FLinearColor PanelColor(.025f, .04f, .065f, .92f);
-	const FLinearColor Muted(.62f, .7f, .78f);
-	const FLinearColor Accent(.25f, .95f, .77f);
-	const FLinearColor Warning(1.f, .72f, .28f);
+	const FLinearColor FirstPersonMuted(.62f, .7f, .78f);
+	const FLinearColor FirstPersonAccent(.25f, .95f, .77f);
+	const FLinearColor FirstPersonWarning(1.f, .72f, .28f);
 
 	const TCHAR* PointReason(EBadmintonPointReason Reason)
 	{
@@ -83,7 +83,7 @@ void ABadmintonHUD::DrawHUD()
 	if (Controller->IsDualViewEnabled()) { DrawDualViewHUD(Match); return; }
 	UIScale = FMath::Min(Canvas->ClipX / 1280.f, Canvas->ClipY / 720.f);
 	const float Width = Canvas->ClipX / UIScale, Height = Canvas->ClipY / UIScale, Center = Width * .5f;
-	if (State->CourtSide < 0 || State->CourtSide > 1) { Label(TEXT("코트에 입장하는 중..."), Center, 40, 1.2f, Accent, 300, true); return; }
+	if (State->CourtSide < 0 || State->CourtSide > 1) { Label(TEXT("코트에 입장하는 중..."), Center, 40, 1.2f, FirstPersonAccent, 300, true); return; }
 	const bool bServing = State->CourtSide == Match->ServingSide;
 	const bool bLobby = Match->Phase == EBadmintonPhase::WaitingForReady || Match->Phase == EBadmintonPhase::WaitingForPlayers;
 	const bool bFinished = Match->Phase == EBadmintonPhase::MatchFinished;
@@ -104,37 +104,37 @@ void ABadmintonHUD::DrawHUD()
 			FVector2D Start, End;
 			if (ProjectFirstPerson(Target + FVector(FMath::Cos(A), FMath::Sin(A), 0) * 85.f, Start)
 				&& ProjectFirstPerson(Target + FVector(FMath::Cos(B), FMath::Sin(B), 0) * 85.f, End))
-			{ DrawLine(Start.X, Start.Y, End.X, End.Y, Warning, 2.f * UIScale); }
+			{ DrawLine(Start.X, Start.Y, End.X, End.Y, FirstPersonWarning, 2.f * UIScale); }
 		}
 		FVector2D Screen;
-		if (ProjectFirstPerson(Target, Screen)) { Label(TEXT("도전 목표"), Screen.X / UIScale, Screen.Y / UIScale, .8f, Warning, 110, true); }
+		if (ProjectFirstPerson(Target, Screen)) { Label(TEXT("도전 목표"), Screen.X / UIScale, Screen.Y / UIScale, .8f, FirstPersonWarning, 110, true); }
 	}
 	if (bPlay)
 	{
 		const FVector2D RacketScreen = Controller->GetRacketScreenPosition();
 		const float CX = Width * RacketScreen.X, CY = Height * RacketScreen.Y;
-		const FLinearColor Crosshair = bCanHit ? Accent : FLinearColor::White;
+		const FLinearColor Crosshair = bCanHit ? FirstPersonAccent : FLinearColor::White;
 		Panel(CX-7, CY-.75f, 4, 1.5f, Crosshair);
 		Panel(CX+3, CY-.75f, 4, 1.5f, Crosshair);
 		Panel(CX-.75f, CY-7, 1.5f, 4, Crosshair);
 		Panel(CX-.75f, CY+3, 1.5f, 4, Crosshair);
 	}
-	Label(Controller->IsAutomaticTimingTestRunning() ? TEXT("자동 검사 중 / 카메라 자동 조작") : TEXT("배드민턴 / 1인칭"), 24, 24, 1.25f, Accent, 300);
-	Label(FString::Printf(TEXT("상대 난이도 %s / 11점 선취 / N 변경"), Controller->GetAIDifficulty() == 0 ? TEXT("쉬움") : Controller->GetAIDifficulty() == 1 ? TEXT("보통") : TEXT("어려움")), 24, 49, .9f, Muted, 310);
-	Label(FString::Printf(TEXT("마우스 감도 %.2f / - + 조절"), Controller->GetMouseSensitivity()), 24, 70, .85f, Muted, 300);
-	Label(Controller->GetSelectedShot() == EBadmintonShot::Smash ? TEXT("라켓 면 고정 / 스매시") : FString::Printf(TEXT("라켓 면 좌우 %+.0f도 / 휠 조절"), Controller->GetRacketTilt()), 24, 88, .85f, Accent, 300);
+	Label(Controller->IsAutomaticTimingTestRunning() ? TEXT("자동 검사 중 / 카메라 자동 조작") : TEXT("배드민턴 / 1인칭"), 24, 24, 1.25f, FirstPersonAccent, 300);
+	Label(FString::Printf(TEXT("상대 난이도 %s / 11점 선취 / N 변경"), Controller->GetAIDifficulty() == 0 ? TEXT("쉬움") : Controller->GetAIDifficulty() == 1 ? TEXT("보통") : TEXT("어려움")), 24, 49, .9f, FirstPersonMuted, 310);
+	Label(FString::Printf(TEXT("마우스 감도 %.2f / - + 조절"), Controller->GetMouseSensitivity()), 24, 70, .85f, FirstPersonMuted, 300);
+	Label(Controller->GetSelectedShot() == EBadmintonShot::Smash ? TEXT("라켓 면 고정 / 스매시") : FString::Printf(TEXT("라켓 면 좌우 %+.0f도 / 휠 조절"), Controller->GetRacketTilt()), 24, 88, .85f, FirstPersonAccent, 300);
 	const auto& Practice = Controller->GetPracticeProgress();
 	Panel(24, 106, 218, 100, PanelColor);
-	Label(TEXT("연습 도전 과제"), 35, 116, .85f, Accent, 196);
-	Label(FString::Printf(TEXT("랠리 %d / 10회   최고 %d회"), Practice.RallyHits, Practice.BestRally), 35, 137, .85f, Practice.RallyHits >= 10 ? Accent : Muted, 196);
-	Label(FString::Printf(TEXT("좌우 목표 %d / 2개"), FMath::Min(Practice.Targets, 2)), 35, 159, .85f, Practice.Targets >= 2 ? Accent : Muted, 196);
-	Label(FString::Printf(TEXT("드롭 + 스매시 득점 %d회"), Practice.ComboPoints), 35, 181, .85f, Practice.ComboPoints > 0 ? Accent : Muted, 196);
+	Label(TEXT("연습 도전 과제"), 35, 116, .85f, FirstPersonAccent, 196);
+	Label(FString::Printf(TEXT("랠리 %d / 10회   최고 %d회"), Practice.RallyHits, Practice.BestRally), 35, 137, .85f, Practice.RallyHits >= 10 ? FirstPersonAccent : FirstPersonMuted, 196);
+	Label(FString::Printf(TEXT("좌우 목표 %d / 2개"), FMath::Min(Practice.Targets, 2)), 35, 159, .85f, Practice.Targets >= 2 ? FirstPersonAccent : FirstPersonMuted, 196);
+	Label(FString::Printf(TEXT("드롭 + 스매시 득점 %d회"), Practice.ComboPoints), 35, 181, .85f, Practice.ComboPoints > 0 ? FirstPersonAccent : FirstPersonMuted, 196);
 	if (bPlay)
 	{
 		FVector Origin, Velocity;
 		const bool bPredicted = Controller->GetShotDirectionPreview(Origin, Velocity);
 		Panel(24, 218, 218, 150, PanelColor);
-		Label(bPredicted ? TEXT("지금 타격할 때의 예상 방향") : TEXT("타격 방향 미리보기"), 35, 228, .8f, Accent, 196);
+		Label(bPredicted ? TEXT("지금 타격할 때의 예상 방향") : TEXT("타격 방향 미리보기"), 35, 228, .8f, FirstPersonAccent, 196);
 		if (bPredicted)
 		{
 			const float SideSign = Badminton::ForwardSign(State->CourtSide);
@@ -143,15 +143,15 @@ void ABadmintonHUD::DrawHUD()
 			const FVector2D Cross(-Heading.Y, Heading.X);
 			auto Line = [&](FVector2D A, FVector2D B, FLinearColor Color, float Thickness)
 			{ DrawLine(A.X*UIScale, A.Y*UIScale, B.X*UIScale, B.Y*UIScale, Color, Thickness*UIScale); };
-			Line(FVector2D(78,319), FVector2D(188,319), Muted.CopyWithNewOpacity(.35f), 1.f);
-			Line(Start, FVector2D(133,261), Muted.CopyWithNewOpacity(.35f), 1.f);
-			Line(Start, End, Accent, 3.f);
-			Line(End, End-Heading*10.f+Cross*6.f, Accent, 3.f);
-			Line(End, End-Heading*10.f-Cross*6.f, Accent, 3.f);
-			Label(TEXT("좌"), 64, 297, .8f, Muted);
-			Label(TEXT("우"), 193, 297, .8f, Muted);
+			Line(FVector2D(78,319), FVector2D(188,319), FirstPersonMuted.CopyWithNewOpacity(.35f), 1.f);
+			Line(Start, FVector2D(133,261), FirstPersonMuted.CopyWithNewOpacity(.35f), 1.f);
+			Line(Start, End, FirstPersonAccent, 3.f);
+			Line(End, End-Heading*10.f+Cross*6.f, FirstPersonAccent, 3.f);
+			Line(End, End-Heading*10.f-Cross*6.f, FirstPersonAccent, 3.f);
+			Label(TEXT("좌"), 64, 297, .8f, FirstPersonMuted);
+			Label(TEXT("우"), 193, 297, .8f, FirstPersonMuted);
 			const float Degrees = FMath::RadiansToDegrees(FMath::Atan2(Heading.X, -Heading.Y));
-			Label(FString::Printf(TEXT("타구 방향 %+.0f도 / 위에서 본 모습"), Degrees), 133, 346, .8f, Accent, 196, true);
+			Label(FString::Printf(TEXT("타구 방향 %+.0f도 / 위에서 본 모습"), Degrees), 133, 346, .8f, FirstPersonAccent, 196, true);
 #if !UE_BUILD_SHIPPING
 			if (Controller->IsAutomaticTimingTestRunning() && !bDirectionPreviewTestReported)
 			{
@@ -162,34 +162,34 @@ void ABadmintonHUD::DrawHUD()
 		}
 		else
 		{
-			Label(Controller->GetSelectedShot() == EBadmintonShot::Smash ? TEXT("스매시 / 라켓 면 고정") : TEXT("셔틀콕이 올 때까지 기다리세요"),133,281,.8f,Muted,196,true);
-			Label(TEXT("휠 위: 오른쪽 / 아래: 왼쪽"),133,346,.75f,Muted,196,true);
+			Label(Controller->GetSelectedShot() == EBadmintonShot::Smash ? TEXT("스매시 / 라켓 면 고정") : TEXT("셔틀콕이 올 때까지 기다리세요"),133,281,.8f,FirstPersonMuted,196,true);
+			Label(TEXT("휠 위: 오른쪽 / 아래: 왼쪽"),133,346,.75f,FirstPersonMuted,196,true);
 		}
 	}
 	Panel(Center - 124, 16, 248, 63, PanelColor);
-	Label(TEXT("나"), Center - 83, 27, .9f, Accent, 65, true);
-	Label(TEXT("상대"), Center + 83, 27, .9f, Muted, 65, true);
+	Label(TEXT("나"), Center - 83, 27, .9f, FirstPersonAccent, 65, true);
+	Label(TEXT("상대"), Center + 83, 27, .9f, FirstPersonMuted, 65, true);
 	Label(FString::Printf(TEXT("%d : %d"), Match->GetScore(State->CourtSide), Match->GetScore(1-State->CourtSide)), Center, 40, 2.f, FLinearColor::White, 160, true);
 	const auto* Attr = State->GetAttributes();
 	Panel(Width-221, 20, 197, 49, PanelColor);
-	Label(FString::Printf(TEXT("스태미나 %.0f"), Attr->GetStamina()), Width-209, 29, .9f, Accent, 172);
-	Panel(Width-209, 53, 172, 4, Muted);
-	Panel(Width-209, 53, 172 * FMath::Clamp(Attr->GetStamina()/FMath::Max(1.f, Attr->GetMaxStamina()), 0.f, 1.f), 4, Accent);
+	Label(FString::Printf(TEXT("스태미나 %.0f"), Attr->GetStamina()), Width-209, 29, .9f, FirstPersonAccent, 172);
+	Panel(Width-209, 53, 172, 4, FirstPersonMuted);
+	Panel(Width-209, 53, 172 * FMath::Clamp(Attr->GetStamina()/FMath::Max(1.f, Attr->GetMaxStamina()), 0.f, 1.f), 4, FirstPersonAccent);
 	if (bLobby || bFinished)
 	{
 		Panel(Center-260, Height*.38f, 520, 87, PanelColor);
 		const TCHAR* Heading = bLobby ? TEXT("경기를 시작할까요?") : Match->WinnerSide == State->CourtSide ? TEXT("승리!") : TEXT("패배");
-		Label(Heading, Center, Height*.38f+13, 1.7f, Accent, 490, true);
+		Label(Heading, Center, Height*.38f+13, 1.7f, FirstPersonAccent, 490, true);
 		Label(bLobby ? TEXT("Enter - 컴퓨터 상대 경기 시작") : TEXT("Enter - 재경기"), Center, Height*.38f+50, 1.15f, FLinearColor::White, 490, true);
 	}
 	else if (Match->Phase == EBadmintonPhase::RallyComplete)
 	{
-		Label(bServing ? TEXT("내 득점") : TEXT("상대 득점"), Center, 104, 1.4f, Accent, 420, true);
-		Label(PointReason(Match->LastPointReason), Center, 132, .95f, Muted, 420, true);
+		Label(bServing ? TEXT("내 득점") : TEXT("상대 득점"), Center, 104, 1.4f, FirstPersonAccent, 420, true);
+		Label(PointReason(Match->LastPointReason), Center, 132, .95f, FirstPersonMuted, 420, true);
 	}
 	else if (Match->Phase == EBadmintonPhase::ReadyToServe)
 	{
-		Label(bServing ? TEXT("내 서브 - 왼쪽 클릭") : TEXT("상대 서브 - 준비하세요"), Center, 99, 1.1f, Accent, 730, true);
+		Label(bServing ? TEXT("내 서브 - 왼쪽 클릭") : TEXT("상대 서브 - 준비하세요"), Center, 99, 1.1f, FirstPersonAccent, 730, true);
 	}
 	// Five shots occupy one compact row, leaving the lower centre clear for the timing gauge.
 	const EBadmintonShot Shots[] = {EBadmintonShot::Drop, EBadmintonShot::Smash, EBadmintonShot::Clear, EBadmintonShot::Hairpin, EBadmintonShot::Receive};
@@ -199,25 +199,25 @@ void ABadmintonHUD::DrawHUD()
 	{
 		const float X=Center-384+Index*156;
 		const bool bSelected=Controller->GetSelectedShot()==Shots[Index];
-		const FLinearColor Color=bSelected ? Accent : Attr->GetStamina()<Data->Get(Shots[Index]).StaminaCost ? Warning : Muted;
+		const FLinearColor Color=bSelected ? FirstPersonAccent : Attr->GetStamina()<Data->Get(Shots[Index]).StaminaCost ? FirstPersonWarning : FirstPersonMuted;
 		Panel(X, Height-85, 150, 49, PanelColor);
 		Panel(X, Height-85, 150, 2, Color);
 		Label(FString::Printf(TEXT("%s  %s"),ShotKeys[Index],Badminton::ShotLabel(Shots[Index])),X+9,Height-74,.92f,Color,134);
-		Label(Shots[Index] == EBadmintonShot::Smash ? TEXT("타이밍에 맞춰 왼쪽 클릭") : TEXT("선택 후 왼쪽 클릭"),X+9,Height-53,.75f,Muted,134);
+		Label(Shots[Index] == EBadmintonShot::Smash ? TEXT("타이밍에 맞춰 왼쪽 클릭") : TEXT("선택 후 왼쪽 클릭"),X+9,Height-53,.75f,FirstPersonMuted,134);
 	}
 	if (bSelectedStroke)
 	{
 		const float Y = Height - 188;
 		Panel(Center-242, Y-27, 484, 107, PanelColor);
-		Label(Controller->GetSelectedShot() == EBadmintonShot::Smash ? TEXT("스매시 / 2를 눌러 준비") : FString::Printf(TEXT("%s / 왼쪽 클릭으로 타격"), Badminton::ShotLabel(Controller->GetSelectedShot())), Center, Y-16, 1.1f, Accent, 450, true);
+		Label(Controller->GetSelectedShot() == EBadmintonShot::Smash ? TEXT("스매시 / 2를 눌러 준비") : FString::Printf(TEXT("%s / 왼쪽 클릭으로 타격"), Badminton::ShotLabel(Controller->GetSelectedShot())), Center, Y-16, 1.1f, FirstPersonAccent, 450, true);
 		Label(TEXT("타격 후 기본 리시브로 복귀 / Q E R 선택"), Center, Y+17, 1.05f, FLinearColor::White, 455, true);
-		Label(ContactText, Center, Y+52, .88f, bCanHit?Accent:Warning, 455, true);
+		Label(ContactText, Center, Y+52, .88f, bCanHit?FirstPersonAccent:FirstPersonWarning, 455, true);
 	}
 	else if (bArmed)
 	{
 		const float Y=Height-188, BarX=Center-220, BarWidth=440;
 		Panel(Center-242,Y-27,484,107,PanelColor);
-		Label(FString::Printf(TEXT("%s / 왼쪽 클릭으로 타격"),Badminton::ShotLabel(Controller->GetSelectedShot())),Center,Y-16,1.1f,Accent,450,true);
+		Label(FString::Printf(TEXT("%s / 왼쪽 클릭으로 타격"),Badminton::ShotLabel(Controller->GetSelectedShot())),Center,Y-16,1.1f,FirstPersonAccent,450,true);
 		Panel(BarX,Y+17,BarWidth,20,FLinearColor(.15f,.20f,.27f));
 		if (Controller->HasContactForecast())
 		{
@@ -226,27 +226,27 @@ void ABadmintonHUD::DrawHUD()
 		{
 			const float Half=Controller->GetTimingWindowWidth(Zone==0 ? .125f : .045f);
 			const float Left=FMath::Clamp(Perfect-Half,0.f,1.f), Right=FMath::Clamp(Perfect+Half,0.f,1.f);
-			Panel(BarX+Left*BarWidth,Y+17,(Right-Left)*BarWidth,20,Zone==0 ? FLinearColor(.23f,.49f,.43f) : Accent);
+			Panel(BarX+Left*BarWidth,Y+17,(Right-Left)*BarWidth,20,Zone==0 ? FLinearColor(.23f,.49f,.43f) : FirstPersonAccent);
 		}
 		const float Cursor=BarX+Controller->GetTimingProgress()*BarWidth;
 		Panel(Cursor-2,Y+10,4,34,FLinearColor::White);
 		}
-		else { Label(TEXT("타격 가능한 거리로 이동하세요"), Center, Y+20, .9f, Warning, 420, true); }
-		Label(ContactText,Center,Y+52,.88f,bCanHit?Accent:Warning,455,true);
+		else { Label(TEXT("타격 가능한 거리로 이동하세요"), Center, Y+20, .9f, FirstPersonWarning, 420, true); }
+		Label(ContactText,Center,Y+52,.88f,bCanHit?FirstPersonAccent:FirstPersonWarning,455,true);
 	}
 	else if (bPlay)
 	{
 		Label(TEXT("마우스: 라켓 조작 | 왼쪽 클릭: 서브 | 2 + 클릭: 스매시"),Center,Height-145,1.05f,FLinearColor::White,730,true);
 	}
 	const FString Challenge = Controller->GetChallengeMessage();
-	if (!Challenge.IsEmpty()) { Label(Challenge, Center, 165, 1.15f, Accent, 650, true); }
+	if (!Challenge.IsEmpty()) { Label(Challenge, Center, 165, 1.15f, FirstPersonAccent, 650, true); }
 	const FString Feedback=Controller->GetTimingMessage();
 	if (!Feedback.IsEmpty())
 	{
 		Panel(Center-242,Height-247,484,36,PanelColor);
-		Label(Feedback,Center,Height-238,1.05f,Warning,462,true);
+		Label(Feedback,Center,Height-238,1.05f,FirstPersonWarning,462,true);
 	}
-	Label(TEXT("WASD 이동 | Shift 대시 | 휠: 라켓 면 | 오른쪽 클릭 취소 | 가운데 클릭 초기화 | V 분할 화면"),Center,Height-22,.82f,Muted,800,true);
+	Label(TEXT("WASD 이동 | Shift 대시 | 휠: 라켓 면 | 오른쪽 클릭 취소 | 가운데 클릭 초기화 | V 분할 화면"),Center,Height-22,.82f,FirstPersonMuted,800,true);
 }
 
 void ABadmintonHUD::DrawShuttleTracking(const ABadmintonGameState* Match)
@@ -305,7 +305,7 @@ void ABadmintonHUD::DrawShuttleTracking(const ABadmintonGameState* Match)
 		if (ProjectFirstPerson(ShuttleTrail[Index - 1], Start)
 			&& ProjectFirstPerson(ShuttleTrail[Index], End))
 		{
-			FLinearColor TrailColor = Warning;
+			FLinearColor TrailColor = FirstPersonWarning;
 			TrailColor.A = .65f * Index / ShuttleTrail.Num();
 			DrawLine(Start.X, Start.Y, End.X, End.Y, TrailColor, 2.f * UIScale);
 		}
@@ -320,7 +320,7 @@ void ABadmintonHUD::DrawShuttleTracking(const ABadmintonGameState* Match)
 		{
 			const FVector2D& A = Corners[Index];
 			const FVector2D& B = Corners[(Index + 1) % 4];
-			DrawLine(A.X, A.Y, B.X, B.Y, Warning, 1.5f * UIScale);
+			DrawLine(A.X, A.Y, B.X, B.Y, FirstPersonWarning, 1.5f * UIScale);
 		}
 	}
 }
@@ -341,17 +341,17 @@ void ABadmintonHUD::DrawAimPreview()
 		if (ProjectFirstPerson(Target + FVector(FMath::Cos(A), FMath::Sin(A), 0) * 28, Start)
 			&& ProjectFirstPerson(Target + FVector(FMath::Cos(B), FMath::Sin(B), 0) * 28, End))
 		{
-			DrawLine(Start.X, Start.Y, End.X, End.Y, Accent, 1.5f * UIScale);
+			DrawLine(Start.X, Start.Y, End.X, End.Y, FirstPersonAccent, 1.5f * UIScale);
 		}
 	}
 	FVector2D Screen;
 	if (ProjectFirstPerson(Target, Screen))
 	{
-		DrawLine(Screen.X - 5 * UIScale, Screen.Y, Screen.X + 5 * UIScale, Screen.Y, Accent, UIScale);
-		DrawLine(Screen.X, Screen.Y - 5 * UIScale, Screen.X, Screen.Y + 5 * UIScale, Accent, UIScale);
+		DrawLine(Screen.X - 5 * UIScale, Screen.Y, Screen.X + 5 * UIScale, Screen.Y, FirstPersonAccent, UIScale);
+		DrawLine(Screen.X, Screen.Y - 5 * UIScale, Screen.X, Screen.Y + 5 * UIScale, FirstPersonAccent, UIScale);
 		const TCHAR* Name = Controller->IsTimingArmed() ? TEXT("목표 고정") : TEXT("타격 목표");
 		Panel(Screen.X / UIScale - 53, Screen.Y / UIScale + 10, 106, 22, PanelColor);
-		Label(FString::Printf(TEXT("%s"), Name), Screen.X / UIScale, Screen.Y / UIScale + 14, .9f, Accent, 150, true);
+		Label(FString::Printf(TEXT("%s"), Name), Screen.X / UIScale, Screen.Y / UIScale + 14, .9f, FirstPersonAccent, 150, true);
 	}
 }
 
@@ -371,7 +371,7 @@ void ABadmintonHUD::DrawMinimap(const ABadmintonGameState* Match, int32 LocalSid
 	};
 	auto Line = [&](const FVector2D& A, const FVector2D& B, const FLinearColor& Color, float Thickness = 1.f)
 	{ DrawLine(A.X * UIScale, A.Y * UIScale, B.X * UIScale, B.Y * UIScale, Color, Thickness * UIScale); };
-	auto CourtLine = [&](const FVector& A, const FVector& B) { Line(Project(A), Project(B), Muted, .8f); };
+	auto CourtLine = [&](const FVector& A, const FVector& B) { Line(Project(A), Project(B), FirstPersonMuted, .8f); };
 	const FVector2D A = Project(FVector(-Badminton::HalfLength, -Badminton::HalfWidth, 0));
 	const FVector2D B = Project(FVector(Badminton::HalfLength, Badminton::HalfWidth, 0));
 	Panel(FMath::Min(A.X,B.X), FMath::Min(A.Y,B.Y), FMath::Abs(A.X-B.X), FMath::Abs(A.Y-B.Y), FLinearColor(.035f,.20f,.17f));
@@ -387,7 +387,7 @@ void ABadmintonHUD::DrawMinimap(const ABadmintonGameState* Match, int32 LocalSid
 	{
 		const FVector2D Raw = Project(Point);
 		const FVector2D Clamped(FMath::Clamp(Raw.X, Origin.X+7., Origin.X+Size.X-7.), FMath::Clamp(Raw.Y, Origin.Y+7., Origin.Y+Size.Y-7.));
-		if (!Raw.Equals(Clamped, .01)) { Line(Clamped, Clamped + (Raw-Clamped).GetSafeNormal()*5.f, Warning, 2.f); }
+		if (!Raw.Equals(Clamped, .01)) { Line(Clamped, Clamped + (Raw-Clamped).GetSafeNormal()*5.f, FirstPersonWarning, 2.f); }
 		return Clamped;
 	};
 	auto Ring = [&](const FVector2D& Center, float Radius, const FLinearColor& Color)
@@ -420,7 +420,7 @@ void ABadmintonHUD::DrawMinimap(const ABadmintonGameState* Match, int32 LocalSid
 		const FVector2D Center = MarkerPoint(It->GetActorLocation());
 		const bool bLocal = State->CourtSide == LocalSide;
 		Panel(Center.X-5,Center.Y-5,10,10,FLinearColor(.01f,.02f,.03f));
-		if (bLocal) { Panel(Center.X-3.5f,Center.Y-3.5f,7,7,Accent); }
+		if (bLocal) { Panel(Center.X-3.5f,Center.Y-3.5f,7,7,FirstPersonAccent); }
 		else
 		{
 			const FVector2D Points[] = {Center+FVector2D(0,-5),Center+FVector2D(5,0),Center+FVector2D(0,5),Center+FVector2D(-5,0)};
@@ -430,12 +430,12 @@ void ABadmintonHUD::DrawMinimap(const ABadmintonGameState* Match, int32 LocalSid
 	if (bShuttle)
 	{
 		const FVector2D Center = MarkerPoint(TrackedShuttle->GetActorLocation());
-		Ring(Center,3.5f,Warning);
+		Ring(Center,3.5f,FirstPersonWarning);
 		Panel(Center.X-1.5f,Center.Y-1.5f,3,3,FLinearColor::White);
 	}
-	Panel(X+13,Y+293,6,6,Accent); Label(TEXT("나"),X+24,Y+290,.75f,Accent,65);
+	Panel(X+13,Y+293,6,6,FirstPersonAccent); Label(TEXT("나"),X+24,Y+290,.75f,FirstPersonAccent,65);
 	Label(TEXT("상대"),X+112,Y+290,.75f,OpponentColor,65); Ring(FVector2D(X+102,Y+296),3.f,OpponentColor);
-	Ring(FVector2D(X+16,Y+317),3.f,Warning); Label(TEXT("셔틀콕"),X+24,Y+312,.75f,Warning,72);
+	Ring(FVector2D(X+16,Y+317),3.f,FirstPersonWarning); Label(TEXT("셔틀콕"),X+24,Y+312,.75f,FirstPersonWarning,72);
 	Ring(FVector2D(X+102,Y+317),4.f,LandingColor); Label(TEXT("예상 낙하"),X+112,Y+312,.75f,LandingColor,77);
 #if !UE_BUILD_SHIPPING
 	if (!bMinimapTestReported && Players == 2 && bShuttle && bLanding && FParse::Param(FCommandLine::Get(), TEXT("BadmintonTimingTest")))
