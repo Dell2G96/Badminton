@@ -1,7 +1,7 @@
 param(
     [ValidateSet('Solo','Host','Join','EOS')][string]$Mode = 'Solo',
     [string]$Address = '127.0.0.1:7777',
-    [ValidatePattern('^[A-Za-z0-9_-]+$')][string]$PackageName = 'BadmintonForgivingTiming',
+    [ValidatePattern('^[A-Za-z0-9_-]+$')][string]$PackageName = 'BadmintonOnlineLobby',
     [switch]$LegacyFirstPerson
 )
 $ErrorActionPreference = 'Stop'

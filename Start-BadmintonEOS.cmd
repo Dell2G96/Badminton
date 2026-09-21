@@ -7,6 +7,6 @@ if not exist "%EOS_GAME_RUNTIME%" (
   pause
   exit /b 1
 )
-"%EOS_GAME_RUNTIME%" -NoProfile -File "%~dp0Scripts\Start-BadmintonPackage.ps1" -Mode EOS -PackageName BadmintonForgivingTiming
+"%EOS_GAME_RUNTIME%" -NoProfile -File "%~dp0Scripts\Start-BadmintonPackage.ps1" -Mode EOS -PackageName BadmintonOnlineLobby
 if errorlevel 1 pause
 endlocal

@@ -7,5 +7,5 @@ if not exist "%TaskPowerShell%" (
   pause
   exit /b 1
 )
-"%TaskPowerShell%" -NoProfile -File "%~dp0Scripts\Start-BadmintonPackage.ps1" -Mode Solo -PackageName BadmintonForgivingTiming -LegacyFirstPerson
+"%TaskPowerShell%" -NoProfile -File "%~dp0Scripts\Start-BadmintonPackage.ps1" -Mode Solo -PackageName BadmintonOnlineLobby -LegacyFirstPerson
 if errorlevel 1 pause
