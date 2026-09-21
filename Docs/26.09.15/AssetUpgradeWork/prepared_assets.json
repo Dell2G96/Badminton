@@ -1,0 +1,8 @@
+{
+  "net": "/Game/Badminton/Models/Gameplay/SM_Badminton_Net_Detailed.SM_Badminton_Net_Detailed",
+  "net_bounds": "<Struct 'BoxSphereBounds' (0x000002B49417F540) {origin: {x: 0.000000, y: 0.000000, z: 77.500000}, box_extent: {x: 11.000000, y: 326.000000, z: 77.500000}, sphere_radius: 335.265939}>",
+  "net_triangles": 4560,
+  "shuttle": "/Game/Badminton/Models/Gameplay/SM_Badminton_Shuttle.SM_Badminton_Shuttle",
+  "shuttle_bounds": "<Struct 'BoxSphereBounds' (0x000002B49417AF40) {origin: {x: 0.067146, y: 0.006104, z: -0.460318}, box_extent: {x: 40.268284, y: 40.230270, z: 49.344690}, sphere_radius: 63.384066}>",
+  "shuttle_lods": 3
+}

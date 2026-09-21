@@ -1,0 +1,776 @@
+#include "BadmintonPlayerController.h"
+
+#include "BadmintonAttributeSet.h"
+#include "BadmintonAIController.h"
+#include "BadmintonCharacter.h"
+#include "BadmintonClearAbility.h"
+#include "BadmintonDashAbility.h"
+#include "Abilities/GameplayAbilityTargetTypes.h"
+#include "BadmintonGameMode.h"
+#include "BadmintonGameState.h"
+#include "BadmintonOnlineSubsystem.h"
+#include "Engine/GameInstance.h"
+#include "GameFramework/PlayerInput.h"
+#include "BadmintonPlayerState.h"
+#include "BadmintonShuttle.h"
+#include "BadmintonShotData.h"
+#include "BadmintonNetMetrics.h"
+#include "BadmintonShotDiagnostics.h"
+#include "HAL/PlatformTime.h"
+#include "Camera/CameraTypes.h"
+#include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
+#include "Engine/LocalPlayer.h"
+#include "EngineUtils.h"
+#include "InputAction.h"
+#include "InputActionValue.h"
+#include "InputMappingContext.h"
+#include "Kismet/GameplayStatics.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
+#include "Misc/Paths.h"
+#include "UnrealClient.h"
+
+ABadmintonPlayerController::ABadmintonPlayerController()
+{
+	bAutoManageActiveCameraTarget = false;
+}
+
+void ABadmintonPlayerController::BeginPlay()
+{
+	Super::BeginPlay();
+	if (IsLocalController())
+	{
+		SetViewTarget(this);
+		SetInputMode(FInputModeGameOnly());
+#if !UE_BUILD_SHIPPING
+		bAIProbe = FParse::Param(FCommandLine::Get(), TEXT("BadmintonAITest"));
+		bNetworkProbe = FParse::Param(FCommandLine::Get(), TEXT("BadmintonNetTest"));
+		bShotProbe = FParse::Param(FCommandLine::Get(), TEXT("BadmintonShotTest"));
+		bPresentationProbe = FParse::Param(FCommandLine::Get(), TEXT("BadmintonPresentationTest"));
+		bShotProbe |= bPresentationProbe;
+		bAimProbe = FParse::Param(FCommandLine::Get(), TEXT("BadmintonAimTest"));
+		bShotProbe |= bAimProbe;
+		bMatchProbe = FParse::Param(FCommandLine::Get(), TEXT("BadmintonMatchTest"));
+		FParse::Value(FCommandLine::Get(), TEXT("BadmintonMatchCount="), MatchProbeTargetCount);
+		MatchProbeTargetCount = FMath::Clamp(MatchProbeTargetCount, 1, 100);
+		bAbilityProbe = FParse::Param(FCommandLine::Get(), TEXT("BadmintonAbilityTest"));
+		bCapturePrototype = FParse::Param(FCommandLine::Get(), TEXT("BadmintonCapture"));
+		bCaptureOnContact = FParse::Param(FCommandLine::Get(), TEXT("BadmintonCaptureOnContact"));
+#endif
+	}
+}
+
+void ABadmintonPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (ULocalPlayer* Local = GetLocalPlayer())
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = Local->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+		{
+			Subsystem->RemoveMappingContext(MovementContext);
+		}
+	}
+	Super::EndPlay(EndPlayReason);
+}
+
+void ABadmintonPlayerController::SetupInputComponent()
+{
+	Super::SetupInputComponent();
+	if (PlayerInput)
+	{
+		// Reserve online shortcuts for this controller without changing other FPS input settings.
+		PlayerInput->DebugExecBindings.RemoveAll([](const FKeyBind& Binding)
+		{
+			return Binding.Key == EKeys::F1 || Binding.Key == EKeys::F2 || Binding.Key == EKeys::F3
+				|| Binding.Key == EKeys::F4 || Binding.Key == EKeys::F5;
+		});
+	}
+	InputComponent->BindKey(EKeys::F1, IE_Pressed, this, &ThisClass::BadmintonEOSLogin);
+	InputComponent->BindKey(EKeys::F2, IE_Pressed, this, &ThisClass::BadmintonEOSHost);
+	InputComponent->BindKey(EKeys::F3, IE_Pressed, this, &ThisClass::BadmintonEOSFind);
+	InputComponent->BindKey(EKeys::F4, IE_Pressed, this, &ThisClass::JoinFirstEOSRoom);
+	InputComponent->BindKey(EKeys::F5, IE_Pressed, this, &ThisClass::BadmintonEOSLeave);
+	InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &ThisClass::BadmintonDrop);
+	InputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ThisClass::BadmintonSmash);
+	InputComponent->BindKey(EKeys::LeftShift, IE_Pressed, this, &ThisClass::BadmintonDash);
+	InputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed, this, &ThisClass::BadmintonAimReset);
+	UEnhancedInputComponent* Input = Cast<UEnhancedInputComponent>(InputComponent);
+	ULocalPlayer* Local = GetLocalPlayer();
+	if (!Input || !Local)
+	{
+		return;
+	}
+	UEnhancedInputLocalPlayerSubsystem* Subsystem = Local->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
+	if (!Subsystem)
+	{
+		return;
+	}
+	MovementContext = NewObject<UInputMappingContext>(this);
+	const FKey Keys[] = {EKeys::W, EKeys::S, EKeys::A, EKeys::D};
+	const FVector2D Directions[] = {FVector2D(0, 1), FVector2D(0, -1), FVector2D(-1, 0), FVector2D(1, 0)};
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(Keys); ++Index)
+	{
+		UInputAction* Action = NewObject<UInputAction>(this);
+		Action->ValueType = EInputActionValueType::Boolean;
+		MoveActions.Add(Action);
+		MovementContext->MapKey(Action, Keys[Index]);
+		Input->BindAction(Action, ETriggerEvent::Triggered, this, &ThisClass::Input_Move, Directions[Index]);
+	}
+	ReadyAction = NewObject<UInputAction>(this);
+	ReadyAction->ValueType = EInputActionValueType::Boolean;
+	MovementContext->MapKey(ReadyAction, EKeys::Enter);
+	Input->BindAction(ReadyAction, ETriggerEvent::Started, this, &ThisClass::BadmintonReady);
+	ClearAction = NewObject<UInputAction>(this);
+	ClearAction->ValueType = EInputActionValueType::Boolean;
+	MovementContext->MapKey(ClearAction, EKeys::LeftMouseButton);
+	Input->BindAction(ClearAction, ETriggerEvent::Started, this, &ThisClass::BadmintonClear);
+	Subsystem->AddMappingContext(MovementContext, 0);
+}
+
+void ABadmintonPlayerController::Input_Move(const FInputActionValue& Value, FVector2D Direction)
+{
+	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
+	if (State && State->CourtSide != INDEX_NONE && GetPawn() && Value.Get<bool>())
+	{
+		const float Sign = Badminton::ForwardSign(State->CourtSide);
+		GetPawn()->AddMovementInput(FVector(Sign * Direction.Y, Sign * Direction.X, 0.f));
+	}
+}
+
+void ABadmintonPlayerController::CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult)
+{
+	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
+	const float Sign = Badminton::ForwardSign(State ? State->CourtSide : 0);
+	OutResult.Location = FVector(-Sign * 1200.f, 0.f, 1050.f);
+	OutResult.Rotation = (FVector(0, 0, 30) - OutResult.Location).Rotation();
+	OutResult.FOV = 75.f;
+}
+
+void ABadmintonPlayerController::BadmintonHost()
+{
+	if (IsLocalController())
+	{
+		UGameplayStatics::OpenLevel(this, TEXT("/Game/Badminton/Maps/L_Badminton_Prototype"), true, TEXT("listen"));
+	}
+}
+
+void ABadmintonPlayerController::BadmintonEOSLogin()
+{
+	if (IsLocalController()) { GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->Login(); }
+}
+
+void ABadmintonPlayerController::BadmintonEOSHost()
+{
+	if (IsLocalController()) { GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->Host(TEXT("Badminton Room")); }
+}
+
+void ABadmintonPlayerController::BadmintonEOSFind()
+{
+	if (IsLocalController()) { GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->FindRooms(); }
+}
+
+void ABadmintonPlayerController::BadmintonEOSJoin(int32 Index)
+{
+	if (IsLocalController()) { GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->JoinRoom(Index); }
+}
+
+void ABadmintonPlayerController::JoinFirstEOSRoom()
+{
+	BadmintonEOSJoin(0);
+}
+
+void ABadmintonPlayerController::BadmintonEOSLeave()
+{
+	if (IsLocalController()) { GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->Leave(); }
+}
+
+void ABadmintonPlayerController::BadmintonJoin(const FString& Address)
+{
+	if (IsLocalController() && !Address.TrimStartAndEnd().IsEmpty())
+	{
+		ClientTravel(Address.TrimStartAndEnd(), TRAVEL_Absolute);
+	}
+}
+
+void ABadmintonPlayerController::BadmintonReady()
+{
+	if (const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>())
+	{
+		ServerSetReady(!State->bReady);
+	}
+}
+
+void ABadmintonPlayerController::BadmintonClear()
+{
+	SendShot(EBadmintonShot::Clear);
+}
+
+void ABadmintonPlayerController::ClientShotFeedback_Implementation(EBadmintonShot Shot, bool bContact, int32 RallyId, double ServerTime)
+{
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	if (!Match || ServerTime <= FeedbackServerTime || RallyId < Match->RallyId
+		|| Match->GetServerWorldTimeSeconds() - ServerTime > 1.5) { return; }
+	FeedbackServerTime = ServerTime;
+	FeedbackRallyId = RallyId;
+	FeedbackExpiresAt = GetWorld()->GetTimeSeconds() + 1.1;
+	bLastShotContact = bContact;
+	const TCHAR* Name = Shot == EBadmintonShot::Serve ? TEXT("SERVE") : Shot == EBadmintonShot::Drop ? TEXT("DROP")
+		: Shot == EBadmintonShot::Smash ? TEXT("SMASH") : TEXT("CLEAR");
+	ShotFeedbackText = FString::Printf(TEXT("%s  /  %s"), Name, bContact ? TEXT("CONNECTED") : TEXT("NO CONTACT"));
+	if (bContact) { ++ConfirmedShotCount; }
+#if !UE_BUILD_SHIPPING
+	if (bPresentationProbe || bAbilityProbe)
+	{
+		UE_LOG(LogTemp, Display, TEXT("BADMINTON_SHOT_FEEDBACK side=%d rally=%d contact=%d shot=%d"),
+			GetPlayerState<ABadmintonPlayerState>() ? GetPlayerState<ABadmintonPlayerState>()->CourtSide : INDEX_NONE, RallyId, bContact, static_cast<int32>(Shot));
+	}
+#endif
+}
+
+bool ABadmintonPlayerController::GetShotFeedback(FString& Text, bool& bContact) const
+{
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	if (!Match || Match->RallyId != FeedbackRallyId || GetWorld()->GetTimeSeconds() >= FeedbackExpiresAt
+		|| (Match->Phase != EBadmintonPhase::ReadyToServe && Match->Phase != EBadmintonPhase::Rally)) { return false; }
+	Text = ShotFeedbackText;
+	bContact = bLastShotContact;
+	return true;
+}
+
+void ABadmintonPlayerController::BadmintonDrop() { SendShot(EBadmintonShot::Drop); }
+void ABadmintonPlayerController::BadmintonSmash() { SendShot(EBadmintonShot::Smash); }
+
+void ABadmintonPlayerController::SendShot(EBadmintonShot Shot)
+{
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	if (const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>(); State && Match)
+	{
+		FGameplayEventData Payload;
+		if (Shot == EBadmintonShot::Clear && Match->Phase == EBadmintonPhase::ReadyToServe) { Shot = EBadmintonShot::Serve; }
+		AimPreviewShot = Shot;
+		Payload.EventTag = Shot == EBadmintonShot::Drop ? TAG_BadmintonDropEvent : Shot == EBadmintonShot::Smash ? TAG_BadmintonSmashEvent
+			: Shot == EBadmintonShot::Serve ? TAG_BadmintonServeEvent : TAG_BadmintonClearEvent;
+		Payload.EventMagnitude = static_cast<float>(Match->RallyId);
+		Payload.Instigator = GetPawn();
+		auto* AimData = new FGameplayAbilityTargetData_LocationInfo();
+		AimData->TargetLocation.LocationType = EGameplayAbilityTargetingLocationType::LiteralTransform;
+		AimData->TargetLocation.LiteralTransform = FTransform(FVector(ShotAim.X, ShotAim.Y, 0));
+		Payload.TargetData.Add(AimData);
+		Badminton::TraceShot(TEXT("Input"), State->GetAbilitySystemComponent(), GetPawn(), Shot);
+		const int32 Activated = State->GetAbilitySystemComponent()->HandleGameplayEvent(Payload.EventTag, &Payload);
+		Badminton::TraceShot(TEXT("Dispatch"), State->GetAbilitySystemComponent(), GetPawn(), Shot, 0, Activated);
+	}
+}
+
+void ABadmintonPlayerController::BadmintonAimReset()
+{
+	ShotAim = FVector2D::ZeroVector;
+	AimPreviewShot = EBadmintonShot::Clear;
+}
+
+void ABadmintonPlayerController::UpdateMouseAim()
+{
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	if (!Match) { return; }
+	if (AimRallyId != Match->RallyId)
+	{
+		AimRallyId = Match->RallyId;
+		BadmintonAimReset();
+	}
+	if (bNetworkProbe || bShotProbe || bMatchProbe || bAbilityProbe || bAIProbe) { return; }
+	float DeltaX = 0.f, DeltaY = 0.f;
+	GetInputMouseDelta(DeltaX, DeltaY);
+	if (FMath::IsFinite(DeltaX) && FMath::IsFinite(DeltaY))
+	{
+		// Mouse delta is already per frame. Multiplying by DeltaTime would make sensitivity FPS dependent.
+		ShotAim.X = FMath::Clamp(ShotAim.X + DeltaX * MouseAimSensitivity, -1., 1.);
+		ShotAim.Y = FMath::Clamp(ShotAim.Y + DeltaY * MouseAimSensitivity, -1., 1.);
+	}
+}
+
+bool ABadmintonPlayerController::GetAimPreview(FVector& Target, EBadmintonShot& Shot) const
+{
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
+	if (!Match || !State || !State->bReady || (Match->Phase != EBadmintonPhase::ReadyToServe && Match->Phase != EBadmintonPhase::Rally)) { return false; }
+	Shot = Match->Phase == EBadmintonPhase::ReadyToServe && Match->ServingSide == State->CourtSide ? EBadmintonShot::Serve
+		: AimPreviewShot == EBadmintonShot::Serve ? EBadmintonShot::Clear : AimPreviewShot;
+	return Match->GetShotData()->ResolveAimTarget(Shot, State->CourtSide, Match->GetScore(State->CourtSide), ShotAim, Target);
+}
+
+void ABadmintonPlayerController::BadmintonDash()
+{
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
+	if (!Match || !State || !GetPawn()) { return; }
+	FVector Direction = GetPawn()->GetLastMovementInputVector().GetSafeNormal2D();
+	if (Direction.IsNearlyZero()) { Direction = FVector(Badminton::ForwardSign(State->CourtSide), 0, 0); }
+	FGameplayEventData Payload;
+	Payload.EventTag = TAG_BadmintonDashEvent;
+	Payload.EventMagnitude = Match->RallyId;
+	Payload.Instigator = GetPawn();
+	auto* Target = new FGameplayAbilityTargetData_LocationInfo();
+	Target->TargetLocation.LocationType = EGameplayAbilityTargetingLocationType::LiteralTransform;
+	Target->TargetLocation.LiteralTransform = FTransform(Direction);
+	Payload.TargetData.Add(Target);
+	State->GetAbilitySystemComponent()->HandleGameplayEvent(Payload.EventTag, &Payload);
+}
+
+void ABadmintonPlayerController::ServerSetReady_Implementation(bool bReady)
+{
+	ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	if (State && Match && (Match->Phase == EBadmintonPhase::WaitingForPlayers || Match->Phase == EBadmintonPhase::WaitingForReady || Match->Phase == EBadmintonPhase::MatchFinished))
+	{
+		State->bReady = bReady;
+		State->ForceNetUpdate();
+		if (ABadmintonGameMode* Mode = GetWorld()->GetAuthGameMode<ABadmintonGameMode>())
+		{
+			Mode->RefreshLobby();
+		}
+	}
+}
+
+void ABadmintonPlayerController::UpdateShuttleClock()
+{
+	if (!Badminton::UseRoundTripClock() || HasAuthority() || !IsLocalController()) { return; }
+	const double RealNow = FPlatformTime::Seconds();
+	if (RealNow < NextClockProbeAt) { return; }
+	NextClockProbeAt = RealNow + 1.;
+	ServerRequestShuttleClock(ShuttleClock.BeginProbe(RealNow, GetWorld()->GetTimeSeconds()));
+}
+
+void ABadmintonPlayerController::ServerRequestShuttleClock_Implementation(uint32 Sequence)
+{
+	const double RealNow = FPlatformTime::Seconds();
+	if (Sequence == 0 || (LastClockReplyAt >= 0. && RealNow - LastClockReplyAt < .25)) { return; }
+	LastClockReplyAt = RealNow;
+	ClientReceiveShuttleClock(Sequence, GetWorld()->GetTimeSeconds());
+}
+
+void ABadmintonPlayerController::ClientReceiveShuttleClock_Implementation(uint32 Sequence, double ServerGameTime)
+{
+	if (HasAuthority() || !IsLocalController() || !Badminton::UseRoundTripClock()) { return; }
+	const bool bAccepted = ShuttleClock.Accept(Sequence, ServerGameTime, FPlatformTime::Seconds(), GetWorld()->GetTimeSeconds());
+	if (Badminton::NetMetricsEnabled())
+	{
+		UE_LOG(LogTemp, Display, TEXT("BADMINTON_CLOCK_SAMPLE sequence=%u accepted=%d selected_rtt_ms=%.3f"),
+			Sequence, bAccepted, ShuttleClock.GetSelectedRTT() * 1000.);
+	}
+}
+
+bool ABadmintonPlayerController::GetShuttleServerTime(double& ServerTime, double& RoundTripSeconds) const
+{
+	if (!Badminton::UseRoundTripClock() || HasAuthority()
+		|| !ShuttleClock.Estimate(FPlatformTime::Seconds(), GetWorld()->GetTimeSeconds(), ServerTime)) { return false; }
+	RoundTripSeconds = ShuttleClock.GetSelectedRTT();
+	return true;
+}
+
+void ABadmintonPlayerController::PlayerTick(float DeltaTime)
+{
+	Super::PlayerTick(DeltaTime);
+	UpdateShuttleClock();
+	if (IsLocalController())
+	{
+		UpdateMouseAim();
+		const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+		const bool bConnectedCourt = Match && Match->ConnectedPlayers == 2;
+		if (bConnectedCourt && !bSawConnectedCourt)
+		{
+			GetGameInstance()->GetSubsystem<UBadmintonOnlineSubsystem>()->ClearConnectionNotice();
+		}
+		bSawConnectedCourt = bConnectedCourt;
+	}
+#if !UE_BUILD_SHIPPING
+	if (bCapturePrototype && IsLocalController() && !bCaptureRequested)
+	{
+		CaptureTime += DeltaTime;
+		FString CaptureFeedback;
+		bool bContact = false;
+		const bool bCaptureMoment = !bCaptureOnContact || (GetShotFeedback(CaptureFeedback, bContact) && bContact
+			&& FeedbackExpiresAt - GetWorld()->GetTimeSeconds() > 1.0);
+		if (CaptureTime > 5.f && bCaptureMoment)
+		{
+			FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("Screenshots/BadmintonPrototype.png"), true, false);
+			bCaptureRequested = true;
+		}
+	}
+	if (bNetworkProbe && IsLocalController() && !bProbeReported)
+	{
+		RunNetworkProbe(DeltaTime);
+	}
+	if (bShotProbe && IsLocalController() && !bProbeReported)
+	{
+		RunShotProbe(DeltaTime);
+	}
+	if (bMatchProbe && IsLocalController() && !bProbeReported) { RunMatchProbe(DeltaTime); }
+	if (bAbilityProbe && IsLocalController() && !bProbeReported) { RunAbilityProbe(DeltaTime); }
+	if (bAIProbe && IsLocalController() && !bProbeReported) { RunAIProbe(DeltaTime); }
+#endif
+}
+
+void ABadmintonPlayerController::RunAIProbe(float DeltaTime)
+{
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
+	if (!Match || !State || !GetPawn()) { return; }
+	ProbeTime += DeltaTime;
+	auto Fail = [this](const TCHAR* Reason)
+	{
+		UE_LOG(LogTemp, Error, TEXT("BADMINTON_AI_TEST FAIL %s"), Reason);
+		bProbeReported = true;
+	};
+	if (ProbeTime > 180.f) { Fail(TEXT("timeout")); return; }
+	if (Match->ConnectedPlayers != 2)
+	{
+		if (ProbeTime > 5.f) { Fail(TEXT("AI missing")); }
+		return;
+	}
+	ABadmintonAIController* Opponent = nullptr;
+	for (TActorIterator<ABadmintonAIController> It(GetWorld()); It; ++It) { Opponent = *It; break; }
+	const ABadmintonPlayerState* AIState = Opponent ? Opponent->GetPlayerState<ABadmintonPlayerState>() : nullptr;
+	if (!AIState || !AIState->IsABot() || !Opponent->GetPawn() || AIState->CourtSide == State->CourtSide
+		|| AIState->GetAbilitySystemComponent()->GetAvatarActor() != Opponent->GetPawn()) { Fail(TEXT("AI possession / GAS")); return; }
+	const FVector AIPosition = Opponent->GetPawn()->GetActorLocation();
+	if (Match->Phase == EBadmintonPhase::Rally && !AIProbePreviousPosition.IsZero()) { AIProbeMovement += FVector::Dist2D(AIPosition, AIProbePreviousPosition); }
+	AIProbePreviousPosition = AIPosition;
+	if (Match->Phase == EBadmintonPhase::WaitingForReady && !State->bReady) { ServerSetReady(true); }
+	if (Match->Phase == EBadmintonPhase::MatchFinished)
+	{
+		if (AIProbeReturns < 10 || AIProbeHumanShots < 5 || AIProbeMovement < 100.f || Match->WinnerSide != AIState->CourtSide
+			|| Match->GetScore(AIState->CourtSide) != Badminton::PointsToWin) { Fail(TEXT("rally / movement / result")); return; }
+		bSawMatchFinished = true;
+		if (!State->bReady) { ServerSetReady(true); }
+		return;
+	}
+	if (bSawMatchFinished && Match->MatchId == 2 && Match->Score0 == 0 && Match->Score1 == 0 && Match->Phase == EBadmintonPhase::ReadyToServe)
+	{
+		UE_LOG(LogTemp, Display, TEXT("BADMINTON_AI_TEST PASS returns=%d humanShots=%d movement_cm=%.1f result=11 rematch=OK"), AIProbeReturns, AIProbeHumanShots, AIProbeMovement);
+		bProbeReported = true;
+		return;
+	}
+	const double Now = GetWorld()->GetTimeSeconds();
+	for (TActorIterator<ABadmintonShuttle> It(GetWorld()); It; ++It)
+	{
+		const FBadmintonFlightState& Flight = It->GetFlight();
+		if (AIProbeSequence != Flight.ShotSequence)
+		{
+			AIProbeSequence = Flight.ShotSequence;
+			if (Flight.LastHitterSide == AIState->CourtSide && Flight.Shot != EBadmintonShot::Serve) { ++AIProbeReturns; }
+			if (Flight.LastHitterSide == State->CourtSide) { ++AIProbeHumanShots; }
+		}
+		if (Match->Phase == EBadmintonPhase::ReadyToServe && Match->ServingSide == State->CourtSide && Now >= AIProbeNextShotAt)
+		{
+			ShotAim = FVector2D::ZeroVector;
+			BadmintonClear();
+			AIProbeNextShotAt = Now + .5;
+		}
+		// Exercise genuine rallies first; then leave the human idle so the AI can finish naturally.
+		if (AIProbeReturns >= 10 || Match->Phase != EBadmintonPhase::Rally || Flight.LastHitterSide == State->CourtSide) { continue; }
+		const FVector Target = ABadmintonAIController::FindReceivePosition(*It, State->CourtSide, Now);
+		const FVector Offset = Target - GetPawn()->GetActorLocation();
+		if (Offset.Size2D() > 15.f) { GetPawn()->AddMovementInput(Offset.GetSafeNormal2D(), FMath::Clamp(Offset.Size2D() / 80.f, 0.f, 1.f)); }
+		const FVector Position = It->GetActorLocation();
+		if (Now >= AIProbeNextShotAt && Flight.bLegalCrossing && Position.X * Badminton::ForwardSign(State->CourtSide) < 0.f
+			&& Position.Z > 80.f && Position.Z < 280.f && FVector::Dist2D(GetPawn()->GetActorLocation(), Position) < 150.f)
+		{
+			ShotAim = FVector2D(AIProbeHumanShots % 2 == 0 ? .8 : -.8, 0.);
+			BadmintonClear();
+			AIProbeNextShotAt = Now + .4;
+		}
+	}
+}
+
+void ABadmintonPlayerController::RunAbilityProbe(float DeltaTime)
+{
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
+	if (!Match || !State || !GetPawn() || Match->ConnectedPlayers != 2) { return; }
+	if (!State->bReady && Match->Phase == EBadmintonPhase::WaitingForReady) { ServerSetReady(true); }
+	if (Match->Phase == EBadmintonPhase::ReadyToServe && State->CourtSide == Match->ServingSide) { BadmintonClear(); }
+	if (Match->Phase != EBadmintonPhase::Rally) { return; }
+	if (AbilityProbeRally != Match->RallyId)
+	{
+		AbilityProbeRally = Match->RallyId;
+		ProbeTime = 0.f;
+		bAbilityProbeActivated = false;
+	}
+	ProbeTime += DeltaTime;
+	UAbilitySystemComponent* ASC = State->GetAbilitySystemComponent();
+	const UBadmintonShotData* Data = Match->GetShotData();
+	const int32 Kind = AbilityProbePassed;
+	const float Cost = Kind == 0 ? Data->Drop.StaminaCost : Kind == 1 ? Data->Smash.StaminaCost : Data->DashCost;
+	auto Fail = [this, State](const TCHAR* Reason)
+	{
+		UE_LOG(LogTemp, Error, TEXT("BADMINTON_ABILITY_TEST FAIL side=%d reason=%s"), State->CourtSide, Reason);
+		bProbeReported = true;
+	};
+	if (!bAbilityProbeActivated && ProbeTime > .6f)
+	{
+		AbilityProbeStamina = State->GetAttributes()->GetStamina();
+		if (HasAuthority())
+		{
+			// Exercise the real granted abilities with insufficient authoritative stamina.
+			ASC->SetNumericAttributeBase(UBadmintonAttributeSet::GetStaminaAttribute(), 0.f);
+			bool bCostsCorrect = true;
+			for (TSubclassOf<UGameplayAbility> Class : {UBadmintonDropAbility::StaticClass(), UBadmintonSmashAbility::StaticClass(), UBadmintonDashAbility::StaticClass(), UBadmintonClearAbility::StaticClass()})
+			{
+				const FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromClass(Class);
+				const bool bAllowed = Spec && Spec->Ability->CanActivateAbility(Spec->Handle, ASC->AbilityActorInfo.Get(), nullptr, nullptr, nullptr);
+				bCostsCorrect &= bAllowed == (Class == UBadmintonClearAbility::StaticClass());
+			}
+			ASC->SetNumericAttributeBase(UBadmintonAttributeSet::GetStaminaAttribute(), AbilityProbeStamina);
+			if (!bCostsCorrect) { Fail(TEXT("insufficient stamina / free clear")); return; }
+		}
+		// A stale event must neither consume stamina nor leave a blocking swing tag.
+		FGameplayEventData Stale;
+		Stale.EventTag = TAG_BadmintonDropEvent;
+		Stale.EventMagnitude = Match->RallyId - 1;
+		ASC->HandleGameplayEvent(Stale.EventTag, &Stale);
+		if (!FMath::IsNearlyEqual(State->GetAttributes()->GetStamina(), AbilityProbeStamina) || ASC->HasMatchingGameplayTag(TAG_BadmintonSwinging))
+		{ Fail(TEXT("stale event changed stamina/state")); return; }
+		FGameplayEventData InvalidAim = Stale;
+		InvalidAim.EventMagnitude = Match->RallyId;
+		auto* InvalidAimData = new FGameplayAbilityTargetData_LocationInfo();
+		InvalidAimData->TargetLocation.LocationType = EGameplayAbilityTargetingLocationType::LiteralTransform;
+		InvalidAimData->TargetLocation.LiteralTransform.SetLocation(FVector(2, 0, 0));
+		InvalidAim.TargetData.Add(InvalidAimData);
+		ASC->HandleGameplayEvent(InvalidAim.EventTag, &InvalidAim);
+		if (!FMath::IsNearlyEqual(State->GetAttributes()->GetStamina(), AbilityProbeStamina, .1f) || ASC->HasMatchingGameplayTag(TAG_BadmintonSwinging))
+		{ Fail(TEXT("invalid aim consumed stamina/state")); return; }
+		ProbeStart = GetPawn()->GetActorLocation();
+		if (Kind == 0) { BadmintonDrop(); BadmintonDrop(); }
+		else if (Kind == 1) { BadmintonSmash(); BadmintonSmash(); }
+		else { BadmintonDash(); BadmintonDash(); }
+		const FGameplayTag ActiveTag = Kind < 2 ? TAG_BadmintonSwinging : TAG_BadmintonDashing;
+		if (!ASC->HasMatchingGameplayTag(ActiveTag) || !FMath::IsNearlyEqual(State->GetAttributes()->GetStamina(), AbilityProbeStamina - Cost, .1f))
+		{
+			const TSubclassOf<UGameplayAbility> ExpectedClass = Kind == 0 ? UBadmintonDropAbility::StaticClass()
+				: Kind == 1 ? UBadmintonSmashAbility::StaticClass() : UBadmintonDashAbility::StaticClass();
+			UE_LOG(LogTemp, Display, TEXT("BADMINTON_ABILITY_DIAGNOSTIC side=%d kind=%d spec=%d ready=%d active=%d before=%.3f after=%.3f cost=%.3f"),
+				State->CourtSide, Kind, ASC->FindAbilitySpecFromClass(ExpectedClass) != nullptr, State->bReady,
+				ASC->HasMatchingGameplayTag(ActiveTag), AbilityProbeStamina, State->GetAttributes()->GetStamina(), Cost);
+			Fail(TEXT("activation or single predicted cost")); return;
+		}
+		bAbilityProbeActivated = true;
+		ProbeTime = 0.f;
+	}
+	else if (bAbilityProbeActivated && ProbeTime > .4f)
+	{
+		const float Current = State->GetAttributes()->GetStamina();
+		if (Current < AbilityProbeStamina - Cost - 1.f || Current > AbilityProbeStamina - Cost + 12.f)
+		{ Fail(TEXT("authoritative cost / regeneration correction")); return; }
+		if (Kind == 2 && FVector::Dist2D(ProbeStart, GetPawn()->GetActorLocation()) < 60.f)
+		{ Fail(TEXT("dash movement missing")); return; }
+		UE_LOG(LogTemp, Display, TEXT("BADMINTON_ABILITY_STEP side=%d kind=%d cost=%.0f stamina=%.1f movement=%.1f"),
+			State->CourtSide, Kind, Cost, Current, FVector::Dist2D(ProbeStart, GetPawn()->GetActorLocation()));
+		++AbilityProbePassed;
+		// Wait for the next rally after this action; do not activate multiple kinds together.
+		ProbeTime = -1000.f;
+		if (AbilityProbePassed == 3)
+		{
+			UE_LOG(LogTemp, Display, TEXT("BADMINTON_ABILITY_TEST PASS side=%d drop/smash/dash costs, stale input, repeat input, movement"), State->CourtSide);
+			bProbeReported = true;
+		}
+	}
+}
+
+void ABadmintonPlayerController::RunMatchProbe(float DeltaTime)
+{
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
+	if (!Match || !State || Match->ConnectedPlayers != 2) { return; }
+	ProbeTime += DeltaTime;
+	if (ProbeTime < .1f) { return; }
+	ProbeTime = 0.f;
+	if (HasAuthority() && Match->Phase == EBadmintonPhase::RallyComplete)
+	{
+		ABadmintonGameMode* Mode = GetWorld()->GetAuthGameMode<ABadmintonGameMode>();
+		const int32 Score = Match->Score0 + Match->Score1;
+		Mode->FinishPracticeRally(FVector(440, 0, 5), Match->RallyId, 0);
+		const bool bStaleAccepted = Mode->TryBasicShot(Cast<ABadmintonCharacter>(GetPawn()), Match->RallyId - 1);
+		if (Match->Score0 + Match->Score1 != Score || bStaleAccepted)
+		{
+			UE_LOG(LogTemp, Error, TEXT("BADMINTON_MATCH_TEST FAIL duplicate point or stale rally"));
+			bProbeReported = true;
+			return;
+		}
+	}
+	if (Match->Phase == EBadmintonPhase::MatchFinished)
+	{
+		if (Match->Score0 != 11 || Match->Score1 != 0 || Match->WinnerSide != 0 || Match->ServingSide != 0)
+		{
+			UE_LOG(LogTemp, Error, TEXT("BADMINTON_MATCH_TEST FAIL side=%d score=%d:%d"), State->CourtSide, Match->Score0, Match->Score1);
+			bProbeReported = true;
+			return;
+		}
+		if (!bSawMatchFinished)
+		{
+			if (Match->MatchId != MatchProbeObservedCount + 1)
+			{
+				UE_LOG(LogTemp, Error, TEXT("BADMINTON_MATCH_TEST FAIL skipped match result"));
+				bProbeReported = true;
+				return;
+			}
+			++MatchProbeObservedCount;
+			UE_LOG(LogTemp, Display, TEXT("BADMINTON_MATCH_FINISH_OBSERVED side=%d score=11:0 match=%d"), State->CourtSide, Match->MatchId);
+		}
+		bSawMatchFinished = true;
+		if (!State->bReady) { ServerSetReady(true); }
+	}
+	else if (bSawMatchFinished && Match->MatchId == MatchProbeObservedCount + 1 && Match->Score0 == 0 && Match->Score1 == 0
+		&& (Match->Phase == EBadmintonPhase::ReadyToServe || Match->Phase == EBadmintonPhase::Rally))
+	{
+		bSawMatchFinished = false;
+		if (MatchProbeObservedCount >= MatchProbeTargetCount)
+		{
+			UE_LOG(LogTemp, Display, TEXT("BADMINTON_MATCH_TEST PASS side=%d match=%d score=0:0 rematch=OK completed=%d"), State->CourtSide, Match->MatchId, MatchProbeObservedCount);
+			bProbeReported = true;
+		}
+	}
+	else if (Match->Phase == EBadmintonPhase::WaitingForReady && !State->bReady) { ServerSetReady(true); }
+	else if (Match->Phase == EBadmintonPhase::ReadyToServe && State->CourtSide == Match->ServingSide && Match->MatchId <= MatchProbeTargetCount) { BadmintonClear(); }
+}
+
+void ABadmintonPlayerController::RunShotProbe(float DeltaTime)
+{
+	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	if (!State || !Match || Match->ConnectedPlayers != 2 || !GetPawn())
+	{
+		return;
+	}
+	if (bAimProbe && (Match->Score0 != 0 || Match->Score1 != 0))
+	{
+		UE_LOG(LogTemp, Error, TEXT("BADMINTON_AIM_TEST FAIL side=%d rally=%d sequence=%d score=%d:%d observed=%d rally ended before ten alternating shots"),
+			State->CourtSide, Match->RallyId, AimProbeSequence, Match->Score0, Match->Score1, AimProbeObservedShots);
+		bProbeReported = true;
+		return;
+	}
+	if (!bProbeStarted)
+	{
+		bProbeStarted = true;
+		ServerSetReady(true);
+	}
+	ShotProbeTime += DeltaTime;
+	if (ShotProbeTime < .05f && !bAimProbe)
+	{
+		return;
+	}
+	ShotProbeTime = 0.f;
+	for (TActorIterator<ABadmintonShuttle> It(GetWorld()); It; ++It)
+	{
+		const FBadmintonFlightState& Flight = It->GetFlight();
+		if (bAimProbe)
+		{
+			ShotAim = FVector2D(.5, .25);
+			if (Flight.ShotSequence > 0 && Flight.ShotSequence != AimProbeSequence)
+			{
+				FVector ExpectedTarget;
+				const bool bCorrect = Match->GetShotData()->ResolveAimTarget(Flight.Shot, Flight.LastHitterSide, 0, ShotAim, ExpectedTarget)
+					&& FVector::Dist(Flight.Aim, FVector(ShotAim.X, ShotAim.Y, 0)) < .02f
+					&& FVector::Dist(Flight.Target, ExpectedTarget) < .1f && Flight.ShotSequence == AimProbeSequence + 1;
+				if (!bCorrect) { UE_LOG(LogTemp, Error, TEXT("BADMINTON_AIM_TEST FAIL side=%d sequence=%d replicated aim/target"), State->CourtSide, Flight.ShotSequence); bProbeReported = true; return; }
+				AimProbeSequence = Flight.ShotSequence;
+				++AimProbeObservedShots;
+			}
+			if (Match->Phase == EBadmintonPhase::Rally && Flight.LastHitterSide != State->CourtSide)
+			{
+				const float Offset = Flight.Target.Y - GetPawn()->GetActorLocation().Y;
+				GetPawn()->AddMovementInput(FVector(0, FMath::Sign(Offset), 0), FMath::Clamp(FMath::Abs(Offset) / 80.f, 0.f, 1.f));
+			}
+		}
+		if (Flight.ShotSequence >= 10)
+		{
+			if (bAimProbe)
+			{
+				UE_LOG(LogTemp, Display, TEXT("BADMINTON_AIM_TEST %s side=%d observed=%d aim=0.50,0.25"),
+					AimProbeObservedShots == 10 ? TEXT("PASS") : TEXT("FAIL"), State->CourtSide, AimProbeObservedShots);
+			}
+			if (bPresentationProbe)
+			{
+				const ABadmintonCharacter* LocalCharacter = Cast<ABadmintonCharacter>(GetPawn());
+				const ABadmintonCharacter* RemoteCharacter = nullptr;
+				for (TActorIterator<ABadmintonCharacter> CharacterIt(GetWorld()); CharacterIt; ++CharacterIt)
+				{
+					if (*CharacterIt != LocalCharacter) { RemoteCharacter = *CharacterIt; break; }
+				}
+				// Allow the final owner RPC and remote swing property to arrive on separate channels.
+				PresentationProbeWait += .05f;
+				if (PresentationProbeWait < .5f) { return; }
+				const int32 LocalSwings = LocalCharacter ? LocalCharacter->GetPresentedSwingCount() : 0;
+				const int32 RemoteSwings = RemoteCharacter ? RemoteCharacter->GetPresentedSwingCount() : 0;
+				const FString PreviousFeedback = ShotFeedbackText;
+				ClientShotFeedback_Implementation(EBadmintonShot::Serve, false, FeedbackRallyId, FeedbackServerTime);
+				ClientShotFeedback_Implementation(EBadmintonShot::Serve, false, FeedbackRallyId - 1, FeedbackServerTime + .01);
+				const bool bPassed = LocalSwings == 5 && RemoteSwings == 5 && ConfirmedShotCount == 5 && ShotFeedbackText == PreviousFeedback;
+				UE_LOG(LogTemp, Display, TEXT("BADMINTON_PRESENTATION_TEST %s side=%d localSwings=%d remoteSwings=%d contacts=%d"),
+					bPassed ? TEXT("PASS") : TEXT("FAIL"), State->CourtSide, LocalSwings, RemoteSwings, ConfirmedShotCount);
+				if (!bPassed) { bProbeReported = true; return; }
+			}
+			UE_LOG(LogTemp, Display, TEXT("BADMINTON_SHOT_TEST PASS side=%d sequence=%d rally=%d"), State->CourtSide, Flight.ShotSequence, Flight.RallyId);
+			bProbeReported = true;
+			return;
+		}
+		if ((Match->Phase == EBadmintonPhase::ReadyToServe && State->CourtSide == Match->ServingSide)
+			|| (Match->Phase == EBadmintonPhase::Rally && Flight.LastHitterSide != State->CourtSide
+				&& FVector::Dist2D(GetPawn()->GetActorLocation(), It->GetActorLocation()) < 150.f
+				&& It->GetActorLocation().Z < 330.f))
+		{
+			BadmintonClear();
+		}
+	}
+}
+
+void ABadmintonPlayerController::RunNetworkProbe(float DeltaTime)
+{
+	const ABadmintonGameState* Match = GetWorld()->GetGameState<ABadmintonGameState>();
+	const ABadmintonPlayerState* State = GetPlayerState<ABadmintonPlayerState>();
+	APawn* LocalPawn = GetPawn();
+	ABadmintonCharacter* RemotePawn = nullptr;
+	for (TActorIterator<ABadmintonCharacter> It(GetWorld()); It; ++It)
+	{
+		if (*It != LocalPawn)
+		{
+			RemotePawn = *It;
+		}
+	}
+	if (!Match || Match->ConnectedPlayers != 2 || !State || State->CourtSide == INDEX_NONE || !LocalPawn || !RemotePawn)
+	{
+		return;
+	}
+	if (!bProbeStarted)
+	{
+		bProbeStarted = true;
+		ProbeStart = LocalPawn->GetActorLocation();
+		RemoteStart = RemotePawn->GetActorLocation();
+		ServerSetReady(true);
+	}
+	ProbeTime += DeltaTime;
+	// Move both players toward the net, then against the side boundary.
+	if (ProbeTime < 1.f)
+	{
+		LocalPawn->AddMovementInput(FVector(Badminton::ForwardSign(State->CourtSide), 0, 0));
+	}
+	else if (ProbeTime < 2.f)
+	{
+		LocalPawn->AddMovementInput(FVector(0, Badminton::ForwardSign(State->CourtSide), 0));
+	}
+	if (ProbeTime > 4.f)
+	{
+		const ABadmintonPlayerState* RemoteState = RemotePawn->GetPlayerState<ABadmintonPlayerState>();
+		const FVector Position = LocalPawn->GetActorLocation();
+		const float LocalDistance = FVector::Dist2D(ProbeStart, Position);
+		const float RemoteDistance = FVector::Dist2D(RemoteStart, RemotePawn->GetActorLocation());
+		const bool bPass = RemoteState && RemoteState->CourtSide != State->CourtSide && LocalDistance > 100.f && RemoteDistance > 100.f
+			&& Match->Phase == EBadmintonPhase::ReadyToServe && State->bReady && RemoteState->bReady
+			&& FMath::Abs(Position.X) < Badminton::HalfLength + 1.f && FMath::Abs(Position.Y) < Badminton::HalfWidth + 1.f
+			&& Position.X * Badminton::ForwardSign(State->CourtSide) < 0.f
+			&& State->GetAbilitySystemComponent()->GetAvatarActor() == LocalPawn && State->GetAttributes()->GetStamina() == 100.f;
+		UE_LOG(LogTemp, Display, TEXT("BADMINTON_NET_TEST %s side=%d local=%.1f remote=%.1f phase=%d location=%s ASC=%s"),
+			bPass ? TEXT("PASS") : TEXT("FAIL"), State->CourtSide, LocalDistance, RemoteDistance, static_cast<int32>(Match->Phase), *Position.ToString(),
+			State->GetAbilitySystemComponent()->GetAvatarActor() == LocalPawn ? TEXT("OK") : TEXT("FAIL"));
+		bProbeReported = true;
+	}
+}

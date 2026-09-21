@@ -1,0 +1,41 @@
+[
+  {
+    "path": "/Game/Badminton/Models/Shuttle/SM_Badminton_Shuttle_Source",
+    "bounds_origin": "<Struct 'Vector' (0x0000024998C08780) {x: 0.030622, y: 0.022661, z: -0.504234}>",
+    "extent": "<Struct 'Vector' (0x0000024998C08798) {x: 40.197432, y: 40.158659, z: 49.300774}>",
+    "sections": 1,
+    "materials": [
+      "/Game/Badminton/Models/Shuttle/material_0.material_0"
+    ],
+    "source": [
+      "D:/_Atents/_DX Potfolio/DirectX11/_Assets/Badminton/Shuttle/White Low Poly Shuttlecock.fbx"
+    ],
+    "exported": true
+  },
+  {
+    "path": "/Game/Badminton/Models/Court/SM_Badminton_Court_Source",
+    "bounds_origin": "<Struct 'Vector' (0x0000024998C08AC0) {x: 0.000000, y: 0.000000, z: -0.000001}>",
+    "extent": "<Struct 'Vector' (0x0000024998C08AD8) {x: 29.255283, y: 50.032883, z: 7.283803}>",
+    "sections": 1,
+    "materials": [
+      "/Game/Badminton/Models/Court/material_0.material_0"
+    ],
+    "source": [
+      "D:/_Atents/_DX Potfolio/DirectX11/_Assets/Badminton/Court/Badminton Court.fbx"
+    ],
+    "exported": true
+  },
+  {
+    "path": "/Game/Badminton/Prototype/SM_SM_Badminton_Court_Details",
+    "bounds_origin": "<Struct 'Vector' (0x0000024998C092C0) {x: 0.000000, y: 350.000000, z: 78.250000}>",
+    "extent": "<Struct 'Vector' (0x0000024998C092D8) {x: 326.000000, y: 672.000000, z: 78.250000}>",
+    "sections": 3,
+    "materials": [
+      "/Game/Badminton/Prototype/M_Court_Lines.M_Court_Lines",
+      "/Game/Badminton/Prototype/M_Court_Post.M_Court_Post",
+      "/Game/Badminton/Prototype/M_Court_Net.M_Court_Net"
+    ],
+    "source": [],
+    "exported": true
+  }
+]

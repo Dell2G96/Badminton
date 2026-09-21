@@ -1,0 +1,25 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "OBSRecording",
+	"Description": "",
+	"Category": "Other",
+	"CreatedBy": "Dell2g",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "OBSRecording",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"PlatformAllowList" : ["Win64"]
+		}
+	]
+}
